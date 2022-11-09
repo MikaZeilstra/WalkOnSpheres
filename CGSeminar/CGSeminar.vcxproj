@@ -93,6 +93,7 @@
   <ItemGroup>
     <ClInclude Include="kernel.cuh" />
     <ClInclude Include="main.h" />
+    <ClInclude Include="vec_mult.cuh" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

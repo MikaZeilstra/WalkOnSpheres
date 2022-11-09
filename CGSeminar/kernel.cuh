@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <iostream>
 
+#include "main.h"
+
 #ifndef CALL_CHECK
 #define CALL_CHECK(call) \
     if(call != 0){          \
@@ -14,7 +16,9 @@
 #endif // !
 
 namespace KernelWrapper {
-	void set_background(uint2 size, float4* image_device, uint2* size_device);
+	void set_initial_distance(uint2 size, float4* image_device, uint2* size_device);
+
+    void make_distance_map(uint2 size, float4* image_device, uint2* size_device, curve_info* curve_pointers);
 }
 
 void GPU_setup();

@@ -66,10 +66,10 @@ int main() {
 	float3 bb_min ={};
 	float3 bb_max ={};
 
+	curve_info device_pointers;
 	
 
 	for (rapidxml::xml_node<>* curve = curve_set->first_node(); curve; curve = curve->next_sibling()) {
-		
 		
 		
 		
@@ -85,28 +85,30 @@ int main() {
 			//Insert the 4 vertexes of the spline
 			for (int i = 0; i < 3; i++) {
 				vertices.push_back({
-					(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "y" : "x", 1))->value()) - (image_size.x / 2),
-					(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "x" : "y", 1))->value()) - (image_size.y / 2),
+					(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "y" : "x", 1))->value())/image_size.x,
+					(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "x" : "y", 1))->value()) / image_size.y,
 					0
 				});
-				bb_min = { std::min(vertices[vertices.size() - 1].x,bb_min.x) ,std::min(vertices[vertices.size() - 1].y,bb_min.y),0 };
-				bb_max = { std::max(vertices[vertices.size() - 1].x,bb_max.x) ,std::max(vertices[vertices.size() - 1].y,bb_max.y),0 };
+				bb_min = { std::min(vertices[vertices.size() - 1].x ,bb_min.x) ,std::min(vertices[vertices.size() - 1].y ,bb_min.y),0 };
+				bb_max = { std::max(vertices[vertices.size() - 1].x,bb_max.x) ,std::max(vertices[vertices.size() - 1].y ,bb_max.y),0 };
 				current_node = current_node->next_sibling();
 			}
 
 			vertices.push_back({
-				(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "y" : "x", 1))->value()) - (image_size.x / 2),
-				(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "x" : "y", 1))->value()) - (image_size.y / 2),
+				(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "y" : "x", 1))->value()) /image_size.x,
+				(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "x" : "y", 1))->value()) / image_size.y,
 				0
 			});
-			bb_min = { std::min(vertices[vertices.size() - 1].x,bb_min.x) ,std::min(vertices[vertices.size() - 1].y,bb_min.y),0 };
-			bb_max = { std::max(vertices[vertices.size() - 1].x,bb_max.x) ,std::max(vertices[vertices.size() - 1].y,bb_max.y),0 };
+			bb_min = { std::min(vertices[vertices.size() - 1].x ,bb_min.x) ,std::min(vertices[vertices.size() - 1].y ,bb_min.y),0 };
+			bb_max = { std::max(vertices[vertices.size() - 1].x,bb_max.x) ,std::max(vertices[vertices.size() - 1].y ,bb_max.y),0 };
 
 			//Update the host variables to the current state
 			segment_indices.push_back(current_segment);
 			current_segment += 4;
-			bounding_boxes.push_back(bb_min);
-			bounding_boxes.push_back(bb_max);
+			float3 bb_dimensions = { bb_max.x - bb_min.x, bb_max.y - bb_min.y ,0 };
+
+			bounding_boxes.push_back({bb_dimensions.x / 2 + bb_min.x, bb_dimensions.y / 2 + bb_min.y,0 });
+			bounding_boxes.push_back(bb_dimensions);
 			curve_map.push_back(current_curve);
 			curve_index.push_back(current_curve_segment++);
 		}
@@ -187,9 +189,14 @@ int main() {
 	//Create PBO for output
 	//PBO opject
 	GLuint distance_pbo;
+	GLuint final_pbo;
 
 	glGenBuffers(1, &distance_pbo);
 	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, distance_pbo);
+	glBufferData(GL_PIXEL_UNPACK_BUFFER, 4 * sizeof(GLfloat) * image_size.x * image_size.y, NULL, GL_DYNAMIC_DRAW);
+
+	glGenBuffers(1, &final_pbo);
+	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, final_pbo);
 	glBufferData(GL_PIXEL_UNPACK_BUFFER, 4 * sizeof(GLfloat) * image_size.x * image_size.y, NULL, GL_DYNAMIC_DRAW);
 
 
@@ -197,32 +204,42 @@ int main() {
 	cudaGraphicsResource* pbo_distance_resource;
 	cudaGraphicsGLRegisterBuffer(&pbo_distance_resource, distance_pbo, cudaGraphicsRegisterFlagsWriteDiscard);
 
+	cudaGraphicsResource* pbo_final_resource;
+	cudaGraphicsGLRegisterBuffer(&pbo_final_resource, final_pbo, cudaGraphicsRegisterFlagsWriteDiscard);
+
+
 	//setup params.image as PBO
 	
 	float4* pbo_distance_device;
+	float4* pbo_final_device;
 	
 
 	
 	
 
 	//Upload data to GPU
-	float3* vertices_device = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * vertices.size(), vertices.data()));
-	float3* bb_device = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * bounding_boxes.size(), bounding_boxes.data()));
+	device_pointers.control_points = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * vertices.size(), vertices.data()));
+	device_pointers.bounding_boxes = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * bounding_boxes.size(), bounding_boxes.data()));
 	unsigned int* segment_indices_device = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * segment_indices.size(),segment_indices.data()));
 	unsigned int* curve_map_device = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * curve_map.size(),curve_map.data()));
 	unsigned int* curve_index_device = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * curve_index.size(),curve_index.data()));
-	unsigned int* curve_map_inverse_device = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * curve_map_inverse.size(),curve_map_inverse.data()));
+	device_pointers.curve_map_inverse = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * curve_map_inverse.size(),curve_map_inverse.data()));
 
-	uint2* color_left_index_device = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2) * color_left_index.size(), color_left_index.data()));
-	float3* color_left_device = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * color_left.size(), color_left.data()));
-	float* color_left_u_device = reinterpret_cast<float*>(GPU_upload(sizeof(float) * color_left_u.size(), color_left_u.data()));
+	device_pointers.color_left_index = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2) * color_left_index.size(), color_left_index.data()));
+	device_pointers.color_right = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * color_left.size(), color_left.data()));
+	device_pointers.color_right_u = reinterpret_cast<float*>(GPU_upload(sizeof(float) * color_left_u.size(), color_left_u.data()));
 
-	uint2* color_right_index_device = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2) * color_right_index.size(), color_right_index.data()));
-	float3* color_right_device = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * color_right.size(), color_right.data()));
-	float* color_right_u_device = reinterpret_cast<float*>(GPU_upload(sizeof(float) * color_right_u.size(), color_right_u.data()));;
+	device_pointers.color_right_index = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2) * color_right_index.size(), color_right_index.data()));
+	device_pointers.color_right = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * color_right.size(), color_right.data()));
+	device_pointers.color_right_u = reinterpret_cast<float*>(GPU_upload(sizeof(float) * color_right_u.size(), color_right_u.data()));
 
+	device_pointers.number_of_segments = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &n_segments));
+	device_pointers.number_of_colors_left = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &n_colors_left));
+	device_pointers.number_of_colors_right = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &n_colors_right));
 
 	uint2* image_size_device = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2), &image_size));
+
+	curve_info* curve_info_device = reinterpret_cast<curve_info*>(GPU_upload(sizeof(curve_info), &device_pointers));
 
 
 	cudaGraphicsMapResources(1, &pbo_distance_resource, NULL);
@@ -230,21 +247,19 @@ int main() {
 
 	float4* image = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
 
-	KernelWrapper::set_background(image_size,pbo_distance_device,image_size_device);
+	KernelWrapper::set_initial_distance(image_size,pbo_distance_device,image_size_device);
+	KernelWrapper::make_distance_map(image_size, pbo_distance_device, image_size_device, curve_info_device);
+
 	GPU_download(sizeof(float4)* image_size.x* image_size.y, pbo_distance_device,image);
 
 	GPU_sync();
 	
-	cudaGraphicsUnmapResources(1, &pbo_distance_resource, NULL);
 
+	cudaGraphicsUnmapResources(1, &pbo_distance_resource, NULL);
 	
 	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, distance_pbo);
 	glDrawPixels(image_size.x, image_size.y, GL_RGBA, GL_FLOAT, 0);
-
 	
-
-	
-
 	
 	glfwSwapBuffers(window);
 
