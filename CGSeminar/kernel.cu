@@ -5,7 +5,7 @@
 
 #define THREADS_PER_BLOCK 32
 #define DISTANCE_INTIAL 10e5
-#define LOCAL_MINIMUM_EPS 1e-2
+#define LOCAL_MINIMUM_EPS 1e-5
 #define NUM_LIN_MINIMUM_SCANS  10
 #define NUM_BIN_MINIMUM_SCANS 100
 
@@ -39,6 +39,7 @@ __device__ __inline__ float3 get_bezier_normal(float3* control_points, float t) 
         6 * t * (1 - t) * control_points[2] +
         3 * t * 2 * control_points[3];
 
+    //Rotate tangent (cc) left and return it
     return { -tangent.y,tangent.x };
 }
 
@@ -75,6 +76,21 @@ __device__ float find_closest_bezier_point(float3* control_points,float3 point) 
     return find_local_minimum(control_points, point, fmaxf((mindex - 1) * (1.0f / NUM_LIN_MINIMUM_SCANS), 0), fminf((mindex + 1) * (1.0f / NUM_LIN_MINIMUM_SCANS), 1));
 }
 
+__device__ float3 find_color(uint2& index, float t,float3* colors, float*color_t) {
+    int i = index.x;
+
+    
+    while (i < index.x + index.y && color_t[i + 1] < t) {
+        i++;
+    }
+    float r = (t - color_t[i]) / (color_t[i + 1] - color_t[i]);
+
+    return {
+        (colors[i].x * (1 - r)) + (colors[i+1].x * r)  ,
+        (colors[i].z * (1 - r)) + (colors[i + 1].y * r),
+        (colors[i].z * (1 - r)) + (colors[i + 1].z * r)
+    };
+}
 
 __global__ void make_distance_map_kernel(float4* image, uint2* size, curve_info* curve_pointers)
 {
@@ -94,13 +110,27 @@ __global__ void make_distance_map_kernel(float4* image, uint2* size, curve_info*
             float bb_distance = sqrtf(dx * dx + dy * dy);
 
             //If the distance to the bounding box is smaller than the current minimum find the actual distance to the segment
-            if (bb_distance < image[x + y * size->y].x) {
+            if (bb_distance < image[x + y * size->y].w) {
                 float closest_t = find_closest_bezier_point(&(curve_pointers->control_points[segment_index * 4]), point);
-                float distance = sqrtf(sqr_dist(get_bezier_point(&(curve_pointers->control_points[segment_index * 4]), closest_t), point));
-                
+                float3 curve_point = get_bezier_point(&(curve_pointers->control_points[segment_index * 4]), closest_t);
+                float distance = sqrtf(sqr_dist(curve_point, point));
+                                
                 //If the actual distance is also smaller update the distance and color map
-                if (distance < image[x + y * size->y].x) {
-                    image[x + y * size->y] = { distance,distance,distance,1 };
+                if (distance < image[x + y * size->y].w) {
+                    float3 curve_normal = get_bezier_normal(&(curve_pointers->control_points[segment_index * 4]), closest_t);
+                    float3 color = { 0,0,0 };
+                    unsigned int curve_index = curve_pointers->curve_map[segment_index];
+                    float curve_t = closest_t + curve_pointers->curve_index[segment_index];
+                    // find the color with the correct side
+                    if (dot_prod(curve_normal, curve_point - point) > 0) {
+                        color = find_color(curve_pointers->color_right_index[curve_index], curve_t, curve_pointers->color_right, curve_pointers->color_right_u);
+                    }
+                    else {
+                       color = find_color(curve_pointers->color_left_index[curve_index], curve_t, curve_pointers->color_left, curve_pointers->color_left_u);
+                    }
+
+
+                    image[x + y * size->y] = { color.x,color.y,color.z,distance };
                 }
                 
             }

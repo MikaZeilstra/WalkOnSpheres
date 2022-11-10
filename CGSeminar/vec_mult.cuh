@@ -26,6 +26,12 @@ __device__ __inline__ float sqr_dist(const float3& a, const float3& b) {
 
 }
 
+__device__ __inline__ float dot_prod(const float3& a, const float3& b) {
+
+	return (a.x * b.x) + (a.y * b.y) + (a.z * b.z);
+
+}
+
 __device__ __inline__ float norm(const float3& a) {
 
 	return a.x * a.x +  a.y  * a.y + a.z * a.z;

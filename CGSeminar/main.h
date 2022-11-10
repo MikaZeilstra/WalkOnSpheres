@@ -11,7 +11,8 @@
 struct curve_info
 {
 	unsigned int * number_of_segments;
-	unsigned int * curve_map_inverse;
+	unsigned int * curve_map;
+	unsigned int* curve_index;
 	
 	float3* control_points;
 	float3* bounding_boxes;

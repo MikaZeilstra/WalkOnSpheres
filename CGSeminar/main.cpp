@@ -37,18 +37,18 @@ int main() {
 
 	uint2 image_size = { std::atoi(curve_set->first_attribute("image_width")->value()) ,std::atoi(curve_set->first_attribute("image_height")->value()) };
 
-	std::vector<float3> vertices = {};
-	std::vector<float3> bounding_boxes = {};
-	std::vector<unsigned int> segment_indices;
-	std::vector<unsigned int> curve_map = {};
-	std::vector<unsigned int> curve_index = {};
-	std::vector<unsigned int> curve_map_inverse = {};
+	//Control point info
+	std::vector<float3> vertices = {};						//The control points for all curves
+	std::vector<float3> bounding_boxes = {};				//Bounding boxes as [i] = {center x , center y}   and  [i+1] = {width,height} 
+	std::vector<unsigned int> curve_map = {};				//Curve number for each segment
+	std::vector<unsigned int> curve_index = {};				//Segment number in each curve per segment
 
+	//Color info
+	std::vector<uint2> color_left_index{};					//for each curve starting index (x) and color control point count (y) in other arrays
+	std::vector<float3> color_left = {};					//Color for each color_control point
+	std::vector<float> color_left_u = {};					//curve parameter for each color control point
 
-	std::vector<uint2> color_left_index{};
-	std::vector<float3> color_left = {};
-	std::vector<float> color_left_u = {};
-
+	//Same as left but for right
 	std::vector<uint2> color_right_index{};
 	std::vector<float3> color_right = {};
 	std::vector<float> color_right_u = {};
@@ -77,7 +77,6 @@ int main() {
 		set_node = curve->first_node("control_points_set", 18);
 
 		current_node = set_node->first_node();
-		curve_map_inverse.push_back(n_segments);
 
 		while (current_node->next_sibling()) {
 			bb_min = { 10e10,10e10 ,0};
@@ -103,7 +102,6 @@ int main() {
 			bb_max = { std::max(vertices[vertices.size() - 1].x,bb_max.x) ,std::max(vertices[vertices.size() - 1].y ,bb_max.y),0 };
 
 			//Update the host variables to the current state
-			segment_indices.push_back(current_segment);
 			current_segment += 4;
 			float3 bb_dimensions = { bb_max.x - bb_min.x, bb_max.y - bb_min.y ,0 };
 
@@ -220,14 +218,13 @@ int main() {
 	//Upload data to GPU
 	device_pointers.control_points = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * vertices.size(), vertices.data()));
 	device_pointers.bounding_boxes = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * bounding_boxes.size(), bounding_boxes.data()));
-	unsigned int* segment_indices_device = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * segment_indices.size(),segment_indices.data()));
-	unsigned int* curve_map_device = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * curve_map.size(),curve_map.data()));
-	unsigned int* curve_index_device = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * curve_index.size(),curve_index.data()));
-	device_pointers.curve_map_inverse = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * curve_map_inverse.size(),curve_map_inverse.data()));
+	device_pointers.curve_map = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * curve_map.size(),curve_map.data()));
+	device_pointers.curve_index = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int) * curve_index.size(),curve_index.data()));
+	
 
 	device_pointers.color_left_index = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2) * color_left_index.size(), color_left_index.data()));
-	device_pointers.color_right = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * color_left.size(), color_left.data()));
-	device_pointers.color_right_u = reinterpret_cast<float*>(GPU_upload(sizeof(float) * color_left_u.size(), color_left_u.data()));
+	device_pointers.color_left = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * color_left.size(), color_left.data()));
+	device_pointers.color_left_u = reinterpret_cast<float*>(GPU_upload(sizeof(float) * color_left_u.size(), color_left_u.data()));
 
 	device_pointers.color_right_index = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2) * color_right_index.size(), color_right_index.data()));
 	device_pointers.color_right = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * color_right.size(), color_right.data()));
