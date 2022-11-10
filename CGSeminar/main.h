@@ -28,6 +28,8 @@ struct curve_info
 	float3* color_right;
 	float* color_right_u;
 
+	curandState_t* rand_state;
+
 };
 
 int main();

@@ -1,7 +1,7 @@
 #pragma once
 #define GLFW_INCLUDE_NONE
 
-#define USE_DIFFUSION_CURVE_SAVE false
+#define USE_DIFFUSION_CURVE_SAVE true
 
 #include "kernel.cuh"
 #include "main.h"
@@ -18,8 +18,9 @@
 #include <rapidxml-1.13/rapidxml.hpp>
 #include <rapidxml-1.13/rapidxml_utils.hpp>
 
-const std::string curve_file = "/arch.xml";
-
+const std::string curve_file = "/lady_bug.xml";
+unsigned int sample_count = 1000;
+float initial_distance_value = 10e5;
 
 
 
@@ -212,8 +213,6 @@ int main() {
 	float4* pbo_final_device;
 	
 
-	
-	
 
 	//Upload data to GPU
 	device_pointers.control_points = reinterpret_cast<float3*>(GPU_upload(sizeof(float3) * vertices.size(), vertices.data()));
@@ -234,27 +233,44 @@ int main() {
 	device_pointers.number_of_colors_left = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &n_colors_left));
 	device_pointers.number_of_colors_right = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &n_colors_right));
 
-	uint2* image_size_device = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2), &image_size));
+	
 
+	uint2* image_size_device = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2), &image_size));
+	unsigned int* sample_count_device = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &sample_count));
+
+	//Reserve space for curand_states and create them
+	device_pointers.rand_state = reinterpret_cast<curandState_t*>(GPU_malloc(sizeof(curandState_t) * image_size.x * image_size.y));
+	KernelWrapper::setup_curand(image_size, device_pointers.rand_state, image_size_device);
 	curve_info* curve_info_device = reinterpret_cast<curve_info*>(GPU_upload(sizeof(curve_info), &device_pointers));
 
 
 	cudaGraphicsMapResources(1, &pbo_distance_resource, NULL);
 	cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_distance_device), NULL, pbo_distance_resource);
 
-	float4* image = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
 
 	KernelWrapper::set_initial_distance(image_size,pbo_distance_device,image_size_device);
 	KernelWrapper::make_distance_map(image_size, pbo_distance_device, image_size_device, curve_info_device);
 
-	GPU_download(sizeof(float4)* image_size.x* image_size.y, pbo_distance_device,image);
+	cudaGraphicsMapResources(1, &pbo_final_resource, NULL);
+	cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_final_device), NULL, pbo_final_resource);
+
+	for (int i = 0; i < sample_count; i++) {
+		KernelWrapper::sample(image_size, pbo_final_device, image_size_device, pbo_distance_device, device_pointers.rand_state,sample_count_device);
+	}
+	
+	float4* image = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
+	float4* distance = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
+
+	GPU_download(sizeof(float4) * image_size.x * image_size.y, pbo_final_device, image);
+	GPU_download(sizeof(float4) * image_size.x * image_size.y, pbo_distance_device, distance);
 
 	GPU_sync();
 	
 
 	cudaGraphicsUnmapResources(1, &pbo_distance_resource, NULL);
+	cudaGraphicsUnmapResources(1, &pbo_final_resource, NULL);
 	
-	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, distance_pbo);
+	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, final_pbo);
 	glDrawPixels(image_size.x, image_size.y, GL_RGBA, GL_FLOAT, 0);
 	
 	
