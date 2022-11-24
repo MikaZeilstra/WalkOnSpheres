@@ -19,9 +19,11 @@
 namespace KernelWrapper {
 	void set_initial_distance(uint2 size, float4* image_device, uint2* size_device);
 
-    void make_distance_map(uint2 size, float4* image_device, uint2* size_device, curve_info* curve_pointers);
+    void reset_samples(uint2 size, curve_info* curve_info_device);
 
-    void sample(uint2 size, float4* image, uint2* size_device, float4* distance_map, curandState_t* rand_states, unsigned int * sample_count);
+    void make_distance_map(uint2 size, float4* distance_device, float4* color_device, curve_info* curve_pointers);
+
+    void sample(uint2 size, float4* image, curve_info* curve_info_device, float4* distance_map, unsigned int sample_count);
 
     void setup_curand(uint2 size, curandState_t* states, uint2* size_device);
 }

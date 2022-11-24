@@ -18,11 +18,10 @@
 #include <rapidxml-1.13/rapidxml.hpp>
 #include <rapidxml-1.13/rapidxml_utils.hpp>
 
-const std::string curve_file = "/lady_bug.xml";
-unsigned int sample_count = 1000;
+const std::string curve_file = "/arch.xml";
 float initial_distance_value = 10e5;
 
-
+char window_name[20];
 
 int main() {
 
@@ -158,9 +157,15 @@ int main() {
 
 	glfwInit();
 	GLFWwindow* window = glfwCreateWindow(image_size.x, image_size.y, "LearnOpenGL", NULL, NULL);
+	window_info info;
+	glfwSetWindowUserPointer(window, &info);
+	info.window_size = image_size;
+
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+	glfwSetKeyCallback(window, key_callback);
 
-
+	snprintf(window_name, 20, "Sample count : %u", info.sample_count);
+	glfwSetWindowTitle(window, window_name);
 	
 	if (window == NULL)
 	{
@@ -177,6 +182,9 @@ int main() {
 	}
 
 	glViewport(0, 0, image_size.x, image_size.y);
+	
+	//Turn off vsync
+	glfwSwapInterval(0);
 
 	gladLoadGL();
 	glClearColor(0, 0, 0, 1);
@@ -188,10 +196,15 @@ int main() {
 	//Create PBO for output
 	//PBO opject
 	GLuint distance_pbo;
+	GLuint color_pbo;
 	GLuint final_pbo;
 
 	glGenBuffers(1, &distance_pbo);
 	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, distance_pbo);
+	glBufferData(GL_PIXEL_UNPACK_BUFFER, 4 * sizeof(GLfloat) * image_size.x * image_size.y, NULL, GL_DYNAMIC_DRAW);
+
+	glGenBuffers(1, &color_pbo);
+	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, color_pbo);
 	glBufferData(GL_PIXEL_UNPACK_BUFFER, 4 * sizeof(GLfloat) * image_size.x * image_size.y, NULL, GL_DYNAMIC_DRAW);
 
 	glGenBuffers(1, &final_pbo);
@@ -203,6 +216,9 @@ int main() {
 	cudaGraphicsResource* pbo_distance_resource;
 	cudaGraphicsGLRegisterBuffer(&pbo_distance_resource, distance_pbo, cudaGraphicsRegisterFlagsWriteDiscard);
 
+	cudaGraphicsResource* pbo_color_resource;
+	cudaGraphicsGLRegisterBuffer(&pbo_color_resource, color_pbo, cudaGraphicsRegisterFlagsWriteDiscard);
+
 	cudaGraphicsResource* pbo_final_resource;
 	cudaGraphicsGLRegisterBuffer(&pbo_final_resource, final_pbo, cudaGraphicsRegisterFlagsWriteDiscard);
 
@@ -210,6 +226,7 @@ int main() {
 	//setup params.image as PBO
 	
 	float4* pbo_distance_device;
+	float4* pbo_color_device;
 	float4* pbo_final_device;
 	
 
@@ -233,52 +250,74 @@ int main() {
 	device_pointers.number_of_colors_left = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &n_colors_left));
 	device_pointers.number_of_colors_right = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &n_colors_right));
 
+	device_pointers.sample_accumulator = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
 	
 
-	uint2* image_size_device = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2), &image_size));
-	unsigned int* sample_count_device = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &sample_count));
-
+	device_pointers.image_size = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2), &image_size));
+	
 	//Reserve space for curand_states and create them
 	device_pointers.rand_state = reinterpret_cast<curandState_t*>(GPU_malloc(sizeof(curandState_t) * image_size.x * image_size.y));
-	KernelWrapper::setup_curand(image_size, device_pointers.rand_state, image_size_device);
+	KernelWrapper::setup_curand(image_size, device_pointers.rand_state, device_pointers.image_size);
 	curve_info* curve_info_device = reinterpret_cast<curve_info*>(GPU_upload(sizeof(curve_info), &device_pointers));
-
+	info.curve_pointers_device = curve_info_device;
 
 	cudaGraphicsMapResources(1, &pbo_distance_resource, NULL);
 	cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_distance_device), NULL, pbo_distance_resource);
 
+	cudaGraphicsMapResources(1, &pbo_color_resource, NULL);
+	cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_color_device), NULL, pbo_color_resource);
 
-	KernelWrapper::set_initial_distance(image_size,pbo_distance_device,image_size_device);
-	KernelWrapper::make_distance_map(image_size, pbo_distance_device, image_size_device, curve_info_device);
+	KernelWrapper::set_initial_distance(image_size, pbo_distance_device,device_pointers.image_size);
+	KernelWrapper::make_distance_map(image_size, pbo_distance_device, pbo_color_device, curve_info_device);
 
 	cudaGraphicsMapResources(1, &pbo_final_resource, NULL);
 	cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_final_device), NULL, pbo_final_resource);
 
-	for (int i = 0; i < sample_count; i++) {
-		KernelWrapper::sample(image_size, pbo_final_device, image_size_device, pbo_distance_device, device_pointers.rand_state,sample_count_device);
-	}
 	
 	float4* image = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
 	float4* distance = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
 
-	GPU_download(sizeof(float4) * image_size.x * image_size.y, pbo_final_device, image);
-	GPU_download(sizeof(float4) * image_size.x * image_size.y, pbo_distance_device, distance);
-
 	GPU_sync();
-	
-
 	cudaGraphicsUnmapResources(1, &pbo_distance_resource, NULL);
+	cudaGraphicsUnmapResources(1, &pbo_color_resource, NULL);
 	cudaGraphicsUnmapResources(1, &pbo_final_resource, NULL);
-	
-	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, final_pbo);
-	glDrawPixels(image_size.x, image_size.y, GL_RGBA, GL_FLOAT, 0);
-	
-	
-	glfwSwapBuffers(window);
+
+	info.sample_count = 1;
 
 	while (!glfwWindowShouldClose(window))
 	{
+		cudaGraphicsMapResources(1, &pbo_color_resource, NULL);
+		cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_color_device), NULL, pbo_color_resource);
+
+
+		cudaGraphicsMapResources(1, &pbo_final_resource, NULL);
+		cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_final_device), NULL, pbo_final_resource);
+
+		KernelWrapper::sample(image_size, pbo_final_device, curve_info_device, pbo_color_device, info.sample_count);
+
+		GPU_sync();
+
+		cudaGraphicsUnmapResources(1, &pbo_color_resource, NULL);
+		cudaGraphicsUnmapResources(1, &pbo_final_resource, NULL);
+
+		if (info.window_type == 0) {
+			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, distance_pbo);
+		}
+		else if (info.window_type == 1) {
+			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, color_pbo);
+		}
+		else if (info.window_type == 2) {
+			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, final_pbo);
+		}
+			
+		glDrawPixels(image_size.x, image_size.y, GL_RGBA, GL_FLOAT, 0);
+
+
+		glfwSwapBuffers(window);
 		glfwPollEvents();
+		snprintf(window_name, 20, "Sample count : %u", info.sample_count);
+		glfwSetWindowTitle(window, window_name );
+		info.sample_count++;
 	}
 	
 	
@@ -302,4 +341,21 @@ static void pushColor(rapidxml::xml_node<>* color_node, std::vector<uint2>& ind,
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
 	glViewport(0, 0, width, height);
+}
+
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+	void* data = glfwGetWindowUserPointer(window);
+	window_info* info = static_cast<window_info*>(data);
+	if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
+		info->window_type = (info->window_type + 1) % 3;
+	}
+	else if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
+		info->window_type = (info->window_type - 1) % 3;
+	}
+	else if (key == GLFW_KEY_R && action == GLFW_PRESS) {
+		KernelWrapper::reset_samples(info->window_size, info->curve_pointers_device);
+		info->sample_count = 0;
+	}
+
 }

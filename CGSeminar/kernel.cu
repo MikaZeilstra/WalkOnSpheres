@@ -96,15 +96,15 @@ __device__ float3 find_color(uint2& index, float t,float3* colors, float*color_t
 }
 
 
-__global__ void make_distance_map_kernel(float4* image, uint2* size, curve_info* curve_pointers)
+__global__ void make_distance_map_kernel(float4* distance,float4* color, curve_info* curve_pointers)
 {
 
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    float3 point = { (float)x / size->x , (float)y / size->y };
+    float3 point = { (float)x / curve_pointers->image_size->x , (float)y / curve_pointers->image_size->y };
 
-    if (x < size->x && y < size->y) {
+    if (x < curve_pointers->image_size->x && y < curve_pointers->image_size->y) {
         // For each curve segment calculate the distance to this point
         for (int segment_index = 0; segment_index < *(curve_pointers->number_of_segments); segment_index++) {
 
@@ -114,27 +114,28 @@ __global__ void make_distance_map_kernel(float4* image, uint2* size, curve_info*
             float bb_distance = sqrtf(dx * dx + dy * dy);
 
             //If the distance to the bounding box is smaller than the current minimum find the actual distance to the segment
-            if (bb_distance < image[x + y * size->x].w) {
+            if (bb_distance < distance[x + y * curve_pointers->image_size->x].w) {
                 float closest_t = find_closest_bezier_point(&(curve_pointers->control_points[segment_index * 4]), point);
                 float3 curve_point = get_bezier_point(&(curve_pointers->control_points[segment_index * 4]), closest_t);
-                float distance = sqrtf(sqr_dist(curve_point, point));
+                float curve_distance = sqrtf(sqr_dist(curve_point, point));
                                 
                 //If the actual distance is also smaller update the distance and color map
-                if (distance < image[x + y * size->x].w) {
+                if (curve_distance < distance[x + y * curve_pointers->image_size->x].w) {
                     float3 curve_normal = get_bezier_normal(&(curve_pointers->control_points[segment_index * 4]), closest_t);
-                    float3 color = { 0,0,0 };
+                    float3 curve_color = { 0,0,0 };
                     unsigned int curve_index = curve_pointers->curve_map[segment_index];
                     float curve_t = closest_t + curve_pointers->curve_index[segment_index];
                     // find the color with the correct side
                     if (dot_prod(curve_normal, curve_point - point) > 0) {
-                        color = find_color(curve_pointers->color_right_index[curve_index], curve_t, curve_pointers->color_right, curve_pointers->color_right_u);
+                        curve_color = find_color(curve_pointers->color_right_index[curve_index], curve_t, curve_pointers->color_right, curve_pointers->color_right_u);
                     }
                     else {
-                       color = find_color(curve_pointers->color_left_index[curve_index], curve_t, curve_pointers->color_left, curve_pointers->color_left_u);
+                        curve_color = find_color(curve_pointers->color_left_index[curve_index], curve_t, curve_pointers->color_left, curve_pointers->color_left_u);
                     }
 
 
-                    image[x + y * size->x] = { color.x,color.y,color.z,fmaxf(distance- DISTANCE_MAP_EPS,0)};
+                    color[x + y * curve_pointers->image_size->x] = { curve_color.x,curve_color.y,curve_color.z,fmaxf(curve_distance- DISTANCE_MAP_EPS,0)};
+                    distance[x + y * curve_pointers->image_size->x] = { curve_distance,curve_distance,curve_distance,curve_distance };
                 }
                 
             }
@@ -167,26 +168,27 @@ __device__ float4 interpolate_bilinear(float4* distance_map,uint2* size, float3&
 
 }
 
-__global__ void sample_kernel(float4* image, uint2* size, float4* distance_map, curandState_t* rand_states,unsigned int* sample_count) {
+__global__ void sample_kernel(float4* image, curve_info* curve_pointers, float4* distance_map, unsigned int sample_count) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    float3 point = { (float)x / size->x , (float)y / size->y };
-    float4 value = distance_map[x + y * size->x];
+    float3 point = { (float)x / curve_pointers->image_size->x , (float)y / curve_pointers->image_size->y };
+    float4 value = distance_map[x + y * curve_pointers->image_size->x];
     float rot_cos = 0;
     float rot_sin = 1;
     int i = 0;
-    if (x < size->x && y < size->y) {
+    if (x < curve_pointers->image_size->x && y < curve_pointers->image_size->y) {
         while(value.w > WALKING_SPHERES_EPS && i < WALKING_SPHERES_MAX_WALK) {
-            sincospif(curand_uniform(&rand_states[x+y*size->x]), &rot_sin, &rot_cos);
+            sincospif(curand_uniform(&curve_pointers->rand_state[x+y* curve_pointers->image_size->x]), &rot_sin, &rot_cos);
             point = { fminf(fmaxf(point.x + rot_cos * value.w,0),1.0f), fminf(fmaxf(point.y + rot_sin * value.w,0),1.0f),0 };
             //value = interpolate_bilinear(distance_map, size, point);
-            value = distance_map[min(max((int)round(point.x * size->x), 0), size->x) +  min(max((int)round(point.y * size->y), 0), (size->y) - 1) * size->x];
+            value = distance_map[min(max((int)round(point.x * curve_pointers->image_size->x), 0), curve_pointers->image_size->x) +  min(max((int)round(point.y * curve_pointers->image_size->y), 0), (curve_pointers->image_size->y) - 1) * curve_pointers->image_size->x];
             i++;
         }
     }
     float4 final_v = { value.x, value.y,value.z, 1};
-    image[x + y * size->x] = image[x + y * size->x] + (1.0f / ( * sample_count)) * final_v;
+    curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x] = curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x] + final_v;
+    image[x + y * curve_pointers->image_size->x] = ((1.0f) / sample_count) * curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x];
 }
 
 __global__ void setup_curand_kernel(curandState_t* states, uint2* size) {
@@ -194,6 +196,14 @@ __global__ void setup_curand_kernel(curandState_t* states, uint2* size) {
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x < size->x && y < size->y) {
         curand_init(x + y * size->x, size->x, size->y, &states[x + y * size->x]);
+    }
+}
+
+__global__ void reset_sample_kernel (curve_info* curve_pointers) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x < curve_pointers->image_size->x && y < curve_pointers->image_size->y) {
+        curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x] = { 0,0,0,1 };
     }
 }
 
@@ -206,18 +216,18 @@ namespace KernelWrapper{
         set_initial_distance_kernel << <dim_block_grid, dim_threads_per_block,0,stream >> > (image_device,size_device);
     }
 
-    void make_distance_map(uint2 size, float4* image_device, uint2* size_device, curve_info* curve_pointers) {
+    void make_distance_map(uint2 size, float4* distance_device,float4* color_device,  curve_info* curve_pointers) {
         dim3 dim_threads_per_block = { THREADS_PER_BLOCK ,THREADS_PER_BLOCK, 1 };
         dim3 dim_block_grid = { ((unsigned int)ceil(size.x / THREADS_PER_BLOCK)), ((unsigned int)ceil(size.y / THREADS_PER_BLOCK)) ,1 };
 
-        make_distance_map_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (image_device, size_device, curve_pointers);
+        make_distance_map_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (distance_device,color_device,  curve_pointers);
     }
 
-    void sample(uint2 size,float4* image, uint2* size_device , float4* distance_map, curandState_t* rand_states, unsigned int* sample_count) {
+    void sample(uint2 size,float4* image, curve_info* curve_info_device, float4* distance_map, unsigned int sample_count) {
         dim3 dim_threads_per_block = { THREADS_PER_BLOCK ,THREADS_PER_BLOCK, 1 };
         dim3 dim_block_grid = { ((unsigned int)ceil(size.x / THREADS_PER_BLOCK)), ((unsigned int)ceil(size.y / THREADS_PER_BLOCK)) ,1 };
 
-        sample_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (image,size_device,distance_map,rand_states,sample_count);
+        sample_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (image, curve_info_device,distance_map,sample_count);
     }
 
     void setup_curand(uint2 size, curandState_t* states, uint2* size_device) {
@@ -227,6 +237,12 @@ namespace KernelWrapper{
         setup_curand_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (states, size_device);
     }
 
+    void reset_samples(uint2 size, curve_info* curve_info_device) {
+        dim3 dim_threads_per_block = { THREADS_PER_BLOCK ,THREADS_PER_BLOCK, 1 };
+        dim3 dim_block_grid = { ((unsigned int)ceil(size.x / THREADS_PER_BLOCK)), ((unsigned int)ceil(size.y / THREADS_PER_BLOCK)) ,1 };
+
+        reset_sample_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (curve_info_device);
+    }
 }
 
 void GPU_setup() {
