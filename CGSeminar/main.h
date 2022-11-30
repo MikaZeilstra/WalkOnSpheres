@@ -42,6 +42,10 @@ struct window_info
 	int window_type;
 
 	unsigned int sample_count;
+
+	bool pause = true;
+
+	bool next_sample = false;
 };
 
 int main();

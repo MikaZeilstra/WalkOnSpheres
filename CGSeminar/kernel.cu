@@ -5,7 +5,7 @@
 
 #define THREADS_PER_BLOCK 32
 #define DISTANCE_INTIAL 10e5
-#define LOCAL_MINIMUM_EPS 1e-4
+#define LOCAL_MINIMUM_EPS 1e-5
 #define NUM_LIN_MINIMUM_SCANS  20
 #define NUM_BIN_MINIMUM_SCANS 100
 #define WALKING_SPHERES_EPS 1e-3
@@ -89,8 +89,8 @@ __device__ float3 find_color(uint2& index, float t,float3* colors, float*color_t
     float r = (t - color_t[i]) / (color_t[i + 1] - color_t[i]);
 
     return {
-        (colors[i].x * (1 - r)) + (colors[i+1].x * r)  ,
-        (colors[i].z * (1 - r)) + (colors[i + 1].y * r),
+        (colors[i].x * (1 - r)) + (colors[i + 1].x * r)  ,
+        (colors[i].y * (1 - r)) + (colors[i + 1].y * r),
         (colors[i].z * (1 - r)) + (colors[i + 1].z * r)
     };
 }
@@ -126,7 +126,7 @@ __global__ void make_distance_map_kernel(float4* distance,float4* color, curve_i
                     unsigned int curve_index = curve_pointers->curve_map[segment_index];
                     float curve_t = closest_t + curve_pointers->curve_index[segment_index];
                     // find the color with the correct side
-                    if (dot_prod(curve_normal, curve_point - point) > 0) {
+                    if (dot_prod(curve_normal, curve_point - point) < 0) {
                         curve_color = find_color(curve_pointers->color_right_index[curve_index], curve_t, curve_pointers->color_right, curve_pointers->color_right_u);
                     }
                     else {
@@ -158,13 +158,13 @@ __device__ float4 interpolate_bilinear(float4* distance_map,uint2* size, float3&
     float x_r = point.x - p1.x;
     float y_r = point.y - p1.y;
 
-    float4 v1 = (1 - x_r) * distance_map[p1.x + p1.y * size->x] + x_r * distance_map[p2.x + p2.y * size->x];
-    float4 v2 = (1 - x_r) * distance_map[p3.x + p3.y * size->x] + x_r * distance_map[p4.x + p4.y * size->x];
+    float4 v1 = (1 - x_r) * distance_map[p1.y + p1.x * size->y] + x_r * distance_map[p2.y + p2.x * size->y];
+    float4 v2 = (1 - x_r) * distance_map[p3.y + p3.x * size->y] + x_r * distance_map[p4.y + p4.x * size->y];
 
     float4 v3 = (1 - y_r) * v1 + (y_r)*v2;
     //v3.w = fminf(fminf(distance_map[p1.x + p1.y * size->x].w, distance_map[p2.x + p2.y * size->x].w), fminf(distance_map[p3.x + p3.y * size->x].w, distance_map[p4.x + p4.y * size->x].w));
 
-    return distance_map[(int) round(x) + (int) round(y) * size->x];
+    return distance_map[(int) round(y) + (int) round(x) * size->y];
 
 }
 
@@ -179,7 +179,7 @@ __global__ void sample_kernel(float4* image, curve_info* curve_pointers, float4*
     int i = 0;
     if (x < curve_pointers->image_size->x && y < curve_pointers->image_size->y) {
         while(value.w > WALKING_SPHERES_EPS && i < WALKING_SPHERES_MAX_WALK) {
-            sincospif(curand_uniform(&curve_pointers->rand_state[x+y* curve_pointers->image_size->x]), &rot_sin, &rot_cos);
+            sincospif(2*curand_uniform(&curve_pointers->rand_state[x+y* curve_pointers->image_size->x]), &rot_sin, &rot_cos);
             point = { fminf(fmaxf(point.x + rot_cos * value.w,0),1.0f), fminf(fmaxf(point.y + rot_sin * value.w,0),1.0f),0 };
             //value = interpolate_bilinear(distance_map, size, point);
             value = distance_map[min(max((int)round(point.x * curve_pointers->image_size->x), 0), curve_pointers->image_size->x) +  min(max((int)round(point.y * curve_pointers->image_size->y), 0), (curve_pointers->image_size->y) - 1) * curve_pointers->image_size->x];

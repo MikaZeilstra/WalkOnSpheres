@@ -18,7 +18,7 @@
 #include <rapidxml-1.13/rapidxml.hpp>
 #include <rapidxml-1.13/rapidxml_utils.hpp>
 
-const std::string curve_file = "/arch.xml";
+const std::string curve_file = "/xmls/arch.xml";
 float initial_distance_value = 10e5;
 
 char window_name[20];
@@ -88,6 +88,10 @@ int main() {
 					(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "x" : "y", 1))->value()) / image_size.y,
 					0
 				});
+				if (USE_DIFFUSION_CURVE_SAVE) {
+					vertices.back().y = 1 - vertices.back().y;
+				}
+
 				bb_min = { std::min(vertices[vertices.size() - 1].x ,bb_min.x) ,std::min(vertices[vertices.size() - 1].y ,bb_min.y),0 };
 				bb_max = { std::max(vertices[vertices.size() - 1].x,bb_max.x) ,std::max(vertices[vertices.size() - 1].y ,bb_max.y),0 };
 				current_node = current_node->next_sibling();
@@ -98,6 +102,10 @@ int main() {
 				(float)std::atof((current_node->first_attribute(USE_DIFFUSION_CURVE_SAVE ? "x" : "y", 1))->value()) / image_size.y,
 				0
 			});
+
+			if (USE_DIFFUSION_CURVE_SAVE) {
+				vertices.back().y = 1 - vertices.back().y;
+			}
 			bb_min = { std::min(vertices[vertices.size() - 1].x ,bb_min.x) ,std::min(vertices[vertices.size() - 1].y ,bb_min.y),0 };
 			bb_max = { std::max(vertices[vertices.size() - 1].x,bb_max.x) ,std::max(vertices[vertices.size() - 1].y ,bb_max.y),0 };
 
@@ -112,7 +120,7 @@ int main() {
 		}
 
 		//Set the current node to the left color nodes
-		set_node = curve->first_node("left_colors_set", 15);
+		set_node = curve->first_node( "left_colors_set" , 15);
 		color_left_index.push_back({ n_colors_left ,0 });
 		current_node = set_node->first_node();
 
@@ -286,19 +294,25 @@ int main() {
 
 	while (!glfwWindowShouldClose(window))
 	{
-		cudaGraphicsMapResources(1, &pbo_color_resource, NULL);
-		cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_color_device), NULL, pbo_color_resource);
+		if (!info.pause || info.next_sample) {
+			cudaGraphicsMapResources(1, &pbo_color_resource, NULL);
+			cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_color_device), NULL, pbo_color_resource);
 
 
-		cudaGraphicsMapResources(1, &pbo_final_resource, NULL);
-		cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_final_device), NULL, pbo_final_resource);
+			cudaGraphicsMapResources(1, &pbo_final_resource, NULL);
+			cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_final_device), NULL, pbo_final_resource);
 
-		KernelWrapper::sample(image_size, pbo_final_device, curve_info_device, pbo_color_device, info.sample_count);
+			KernelWrapper::sample(image_size, pbo_final_device, curve_info_device, pbo_color_device, info.sample_count);
 
-		GPU_sync();
+			GPU_sync();
 
-		cudaGraphicsUnmapResources(1, &pbo_color_resource, NULL);
-		cudaGraphicsUnmapResources(1, &pbo_final_resource, NULL);
+			cudaGraphicsUnmapResources(1, &pbo_color_resource, NULL);
+			cudaGraphicsUnmapResources(1, &pbo_final_resource, NULL);
+
+			info.sample_count++;
+
+			info.next_sample = false;
+		}
 
 		if (info.window_type == 0) {
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, distance_pbo);
@@ -317,7 +331,6 @@ int main() {
 		glfwPollEvents();
 		snprintf(window_name, 20, "Sample count : %u", info.sample_count);
 		glfwSetWindowTitle(window, window_name );
-		info.sample_count++;
 	}
 	
 	
@@ -355,7 +368,13 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 	}
 	else if (key == GLFW_KEY_R && action == GLFW_PRESS) {
 		KernelWrapper::reset_samples(info->window_size, info->curve_pointers_device);
-		info->sample_count = 0;
+		info->sample_count = 1;
+	}
+	else if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
+		info->pause = !info->pause;
+	}
+	else if (key == GLFW_KEY_D && action == GLFW_PRESS) {
+		info->next_sample = true;
 	}
 
 }
