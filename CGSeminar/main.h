@@ -26,11 +26,17 @@ struct curve_info
 	float3* color_right;
 	float* color_right_u;
 
+	float4* current_solution;
+	float4* distance_map;
+	float4* boundary_conditions;
+
 	float4* sample_accumulator;
 
 	curandState_t* rand_state;
 
 	uint2* image_size;
+
+	float4*  image_table[3];
 };
 
 struct window_info
@@ -38,14 +44,15 @@ struct window_info
 	curve_info* curve_pointers_device;
 
 	uint2 window_size;
-	uint2 mouse_pos;
+	double2 mouse_pos;
 	int window_type;
 
 	unsigned int sample_count;
 
+	bool switch_window = true;
 	bool pause = true;
-
 	bool next_sample = false;
+	bool draw_circle = false;
 };
 
 int main();

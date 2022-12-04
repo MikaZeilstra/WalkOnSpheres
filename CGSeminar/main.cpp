@@ -3,12 +3,16 @@
 
 #define USE_DIFFUSION_CURVE_SAVE true
 
+#define _USE_MATH_DEFINES
+
 #include "kernel.cuh"
 #include "main.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <cuda_gl_interop.h>
+
+#include <cmath>
 
 #include <stdio.h>
 #include <iostream>
@@ -67,6 +71,8 @@ int main() {
 	float3 bb_max ={};
 
 	curve_info device_pointers;
+
+	srand(time(NULL));
 	
 
 	for (rapidxml::xml_node<>* curve = curve_set->first_node(); curve; curve = curve->next_sibling()) {
@@ -203,38 +209,17 @@ int main() {
 
 	//Create PBO for output
 	//PBO opject
-	GLuint distance_pbo;
-	GLuint color_pbo;
 	GLuint final_pbo;
 
-	glGenBuffers(1, &distance_pbo);
-	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, distance_pbo);
-	glBufferData(GL_PIXEL_UNPACK_BUFFER, 4 * sizeof(GLfloat) * image_size.x * image_size.y, NULL, GL_DYNAMIC_DRAW);
-
-	glGenBuffers(1, &color_pbo);
-	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, color_pbo);
-	glBufferData(GL_PIXEL_UNPACK_BUFFER, 4 * sizeof(GLfloat) * image_size.x * image_size.y, NULL, GL_DYNAMIC_DRAW);
 
 	glGenBuffers(1, &final_pbo);
 	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, final_pbo);
 	glBufferData(GL_PIXEL_UNPACK_BUFFER, 4 * sizeof(GLfloat) * image_size.x * image_size.y, NULL, GL_DYNAMIC_DRAW);
 
 
-	//Register PBO in CUDA for further usage
-	cudaGraphicsResource* pbo_distance_resource;
-	cudaGraphicsGLRegisterBuffer(&pbo_distance_resource, distance_pbo, cudaGraphicsRegisterFlagsWriteDiscard);
-
-	cudaGraphicsResource* pbo_color_resource;
-	cudaGraphicsGLRegisterBuffer(&pbo_color_resource, color_pbo, cudaGraphicsRegisterFlagsWriteDiscard);
-
 	cudaGraphicsResource* pbo_final_resource;
 	cudaGraphicsGLRegisterBuffer(&pbo_final_resource, final_pbo, cudaGraphicsRegisterFlagsWriteDiscard);
 
-
-	//setup params.image as PBO
-	
-	float4* pbo_distance_device;
-	float4* pbo_color_device;
 	float4* pbo_final_device;
 	
 
@@ -258,6 +243,12 @@ int main() {
 	device_pointers.number_of_colors_left = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &n_colors_left));
 	device_pointers.number_of_colors_right = reinterpret_cast<unsigned int*>(GPU_upload(sizeof(unsigned int), &n_colors_right));
 
+	device_pointers.distance_map = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
+	device_pointers.image_table[0] = device_pointers.distance_map;
+	device_pointers.boundary_conditions = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
+	device_pointers.image_table[1] = device_pointers.boundary_conditions;
+	device_pointers.current_solution = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
+	device_pointers.image_table[2] = device_pointers.current_solution;
 	device_pointers.sample_accumulator = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
 	
 
@@ -269,61 +260,80 @@ int main() {
 	curve_info* curve_info_device = reinterpret_cast<curve_info*>(GPU_upload(sizeof(curve_info), &device_pointers));
 	info.curve_pointers_device = curve_info_device;
 
-	cudaGraphicsMapResources(1, &pbo_distance_resource, NULL);
-	cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_distance_device), NULL, pbo_distance_resource);
 
-	cudaGraphicsMapResources(1, &pbo_color_resource, NULL);
-	cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_color_device), NULL, pbo_color_resource);
+	
 
-	KernelWrapper::set_initial_distance(image_size, pbo_distance_device,device_pointers.image_size);
-	KernelWrapper::make_distance_map(image_size, pbo_distance_device, pbo_color_device, curve_info_device);
+	KernelWrapper::set_initial_distance(image_size, device_pointers.distance_map, device_pointers.image_size);
+	KernelWrapper::make_distance_map(image_size, device_pointers.distance_map, device_pointers.boundary_conditions, curve_info_device);
 
 	cudaGraphicsMapResources(1, &pbo_final_resource, NULL);
 	cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_final_device), NULL, pbo_final_resource);
 
 	
-	float4* image = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
-	float4* distance = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
+	float4* distance_map = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
+	GPU_download(sizeof(float4) * image_size.x * image_size.y, device_pointers.distance_map, distance_map);
 
 	GPU_sync();
-	cudaGraphicsUnmapResources(1, &pbo_distance_resource, NULL);
-	cudaGraphicsUnmapResources(1, &pbo_color_resource, NULL);
-	cudaGraphicsUnmapResources(1, &pbo_final_resource, NULL);
 
 	info.sample_count = 1;
 
 	while (!glfwWindowShouldClose(window))
 	{
+		cudaGraphicsMapResources(1, &pbo_final_resource, NULL);
+		cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_final_device), NULL, pbo_final_resource);
+		
+		if (info.switch_window) {
+			GPU_copy(sizeof(float4) * image_size.x * image_size.y, device_pointers.image_table[info.window_type], pbo_final_device);
+
+			info.switch_window = false;
+		}
+
+
 		if (!info.pause || info.next_sample) {
-			cudaGraphicsMapResources(1, &pbo_color_resource, NULL);
-			cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_color_device), NULL, pbo_color_resource);
 
-
-			cudaGraphicsMapResources(1, &pbo_final_resource, NULL);
-			cudaGraphicsResourceGetMappedPointer(reinterpret_cast<void**>(&pbo_final_device), NULL, pbo_final_resource);
-
-			KernelWrapper::sample(image_size, pbo_final_device, curve_info_device, pbo_color_device, info.sample_count);
-
-			GPU_sync();
-
-			cudaGraphicsUnmapResources(1, &pbo_color_resource, NULL);
-			cudaGraphicsUnmapResources(1, &pbo_final_resource, NULL);
+			KernelWrapper::sample(image_size, curve_info_device, info.sample_count);
+			GPU_copy(sizeof(float4) * image_size.x * image_size.y, device_pointers.image_table[info.window_type], pbo_final_device);
 
 			info.sample_count++;
 
 			info.next_sample = false;
 		}
+		else if (info.draw_circle) {
+			GPU_copy(sizeof(float4) * image_size.x * image_size.y, device_pointers.image_table[info.window_type], pbo_final_device);
 
-		if (info.window_type == 0) {
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, distance_pbo);
+
+			int x = fminf(fmaxf(round(info.mouse_pos.x),0), info.window_size.x);
+			int y = image_size.y - fminf(fmaxf(round(info.mouse_pos.y), 0), info.window_size.y);
+
+			float2 point = {x/(float)info.window_size.x ,  y / (float) info.window_size.y};
+			float distance = distance_map[x + y * image_size.x].x;
+			float rot_cos = 0;
+			float rot_sin = 1;
+			int i = 0;
+			KernelWrapper::create_circle(image_size, curve_info_device, pbo_final_device, point, distance);
+
+			while (distance > WALKING_SPHERES_EPS && i < WALKING_SPHERES_MAX_WALK) {
+				float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+
+				rot_cos = cos(2 * r * M_PI);
+				rot_sin = sin(2 * r * M_PI);
+				point = { fminf(fmaxf(point.x + rot_cos * distance,0),1.0f), fminf(fmaxf(point.y + rot_sin * distance,0),1.0f)};
+				distance = distance_map[(int) round(fminf(fmaxf((int)round(point.x * image_size.x), 0), image_size.x) + fminf(fmaxf((int)round(point.y * image_size.y), 0), (image_size.y) - 1) * image_size.x)].w;
+
+				KernelWrapper::create_circle(image_size, curve_info_device, pbo_final_device, point, distance);
+
+				i++;
+
+
+			}
+
+			info.draw_circle = false;
 		}
-		else if (info.window_type == 1) {
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, color_pbo);
-		}
-		else if (info.window_type == 2) {
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, final_pbo);
-		}
-			
+
+		GPU_sync();
+		cudaGraphicsUnmapResources(1, &pbo_final_resource, NULL);
+
+		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, final_pbo);
 		glDrawPixels(image_size.x, image_size.y, GL_RGBA, GL_FLOAT, 0);
 
 
@@ -362,9 +372,11 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 	window_info* info = static_cast<window_info*>(data);
 	if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
 		info->window_type = (info->window_type + 1) % 3;
+		info->switch_window = true;
 	}
 	else if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
-		info->window_type = (info->window_type - 1) % 3;
+		info->window_type = ((info->window_type - 1)+3) % 3;
+		info->switch_window = true;
 	}
 	else if (key == GLFW_KEY_R && action == GLFW_PRESS) {
 		KernelWrapper::reset_samples(info->window_size, info->curve_pointers_device);
@@ -375,6 +387,10 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 	}
 	else if (key == GLFW_KEY_D && action == GLFW_PRESS) {
 		info->next_sample = true;
+	}
+	else if (key == GLFW_KEY_C && action == GLFW_PRESS) {
+		glfwGetCursorPos(window, &(info->mouse_pos.x), &(info->mouse_pos.y));
+		info->draw_circle = true;
 	}
 
 }

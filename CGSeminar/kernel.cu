@@ -3,15 +3,6 @@
 #include "kernel.cuh"
 #include "vec_mult.cuh"
 
-#define THREADS_PER_BLOCK 32
-#define DISTANCE_INTIAL 10e5
-#define LOCAL_MINIMUM_EPS 1e-5
-#define NUM_LIN_MINIMUM_SCANS  20
-#define NUM_BIN_MINIMUM_SCANS 100
-#define WALKING_SPHERES_EPS 1e-3
-#define WALKING_SPHERES_MAX_WALK 100
-#define DISTANCE_MAP_EPS 5e-3
-
 CUstream_st* stream;
 
 __global__ void set_initial_distance_kernel(float4* image, uint2* size)
@@ -168,12 +159,12 @@ __device__ float4 interpolate_bilinear(float4* distance_map,uint2* size, float3&
 
 }
 
-__global__ void sample_kernel(float4* image, curve_info* curve_pointers, float4* distance_map, unsigned int sample_count) {
+__global__ void sample_kernel(curve_info* curve_pointers, unsigned int sample_count) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
     float3 point = { (float)x / curve_pointers->image_size->x , (float)y / curve_pointers->image_size->y };
-    float4 value = distance_map[x + y * curve_pointers->image_size->x];
+    float4 value = curve_pointers->boundary_conditions[x + y * curve_pointers->image_size->x];
     float rot_cos = 0;
     float rot_sin = 1;
     int i = 0;
@@ -182,13 +173,13 @@ __global__ void sample_kernel(float4* image, curve_info* curve_pointers, float4*
             sincospif(2*curand_uniform(&curve_pointers->rand_state[x+y* curve_pointers->image_size->x]), &rot_sin, &rot_cos);
             point = { fminf(fmaxf(point.x + rot_cos * value.w,0),1.0f), fminf(fmaxf(point.y + rot_sin * value.w,0),1.0f),0 };
             //value = interpolate_bilinear(distance_map, size, point);
-            value = distance_map[min(max((int)round(point.x * curve_pointers->image_size->x), 0), curve_pointers->image_size->x) +  min(max((int)round(point.y * curve_pointers->image_size->y), 0), (curve_pointers->image_size->y) - 1) * curve_pointers->image_size->x];
+            value = curve_pointers->boundary_conditions[min(max((int)round(point.x * curve_pointers->image_size->x), 0), curve_pointers->image_size->x) +  min(max((int)round(point.y * curve_pointers->image_size->y), 0), (curve_pointers->image_size->y) - 1) * curve_pointers->image_size->x];
             i++;
         }
     }
     float4 final_v = { value.x, value.y,value.z, 1};
     curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x] = curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x] + final_v;
-    image[x + y * curve_pointers->image_size->x] = ((1.0f) / sample_count) * curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x];
+    curve_pointers->current_solution[x + y * curve_pointers->image_size->x] = ((1.0f) / sample_count) * curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x];
 }
 
 __global__ void setup_curand_kernel(curandState_t* states, uint2* size) {
@@ -204,6 +195,25 @@ __global__ void reset_sample_kernel (curve_info* curve_pointers) {
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x < curve_pointers->image_size->x && y < curve_pointers->image_size->y) {
         curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x] = { 0,0,0,1 };
+    }
+}
+
+__global__ void create_circle_kernel(curve_info*curve_pointers,float4* image, float2 circle_centre, float radius) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    float x_normal = x / (float)curve_pointers->image_size->x;
+    float y_normal = y / (float)curve_pointers->image_size->y;
+
+    if (x < curve_pointers->image_size->x && y < curve_pointers->image_size->y) {
+        float circle_dist = sqrtf((circle_centre.x - x_normal) * (circle_centre.x - x_normal) + (circle_centre.y - y_normal) * (circle_centre.y - y_normal));
+
+        if (circle_dist < radius + CIRCLE_WIDTH && circle_dist > radius - CIRCLE_WIDTH) {
+            image[x + y * curve_pointers->image_size->x] = 0.5 * image[x + y * curve_pointers->image_size->x] + 0.5 * make_float4( CIRCLE_COLOR );
+        }
+        else if(circle_dist < CIRCLE_WIDTH*5) {
+            image[x + y * curve_pointers->image_size->x] = 0.5 * image[x + y * curve_pointers->image_size->x] + 0.5 * make_float4(CIRCLE_CENTER_COLOR);
+        }
     }
 }
 
@@ -223,11 +233,11 @@ namespace KernelWrapper{
         make_distance_map_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (distance_device,color_device,  curve_pointers);
     }
 
-    void sample(uint2 size,float4* image, curve_info* curve_info_device, float4* distance_map, unsigned int sample_count) {
+    void sample(uint2 size, curve_info* curve_info_device, unsigned int sample_count) {
         dim3 dim_threads_per_block = { THREADS_PER_BLOCK ,THREADS_PER_BLOCK, 1 };
         dim3 dim_block_grid = { ((unsigned int)ceil(size.x / THREADS_PER_BLOCK)), ((unsigned int)ceil(size.y / THREADS_PER_BLOCK)) ,1 };
 
-        sample_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (image, curve_info_device,distance_map,sample_count);
+        sample_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (curve_info_device, sample_count);
     }
 
     void setup_curand(uint2 size, curandState_t* states, uint2* size_device) {
@@ -242,6 +252,13 @@ namespace KernelWrapper{
         dim3 dim_block_grid = { ((unsigned int)ceil(size.x / THREADS_PER_BLOCK)), ((unsigned int)ceil(size.y / THREADS_PER_BLOCK)) ,1 };
 
         reset_sample_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (curve_info_device);
+    }
+
+    void create_circle(uint2 size, curve_info* curve_info_device, float4* image, float2 circle_center, float radius) {
+        dim3 dim_threads_per_block = { THREADS_PER_BLOCK ,THREADS_PER_BLOCK, 1 };
+        dim3 dim_block_grid = { ((unsigned int)ceil(size.x / THREADS_PER_BLOCK)), ((unsigned int)ceil(size.y / THREADS_PER_BLOCK)) ,1 };
+
+        create_circle_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > ( curve_info_device, image, circle_center,radius);
     }
 }
 
@@ -287,4 +304,14 @@ void GPU_free(void* device_ptr) {
 void GPU_sync() {
     CALL_CHECK(cudaDeviceSynchronize());
     CALL_CHECK(cudaStreamSynchronize(stream));
+}
+
+void GPU_copy(rsize_t size, void* data_src, void* data_dst) {
+    CALL_CHECK(cudaMemcpyAsync(
+        data_dst,
+        data_src,
+        size,
+        cudaMemcpyDeviceToDevice,
+        stream
+    ));
 }
