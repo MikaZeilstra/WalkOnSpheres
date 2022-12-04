@@ -6,6 +6,8 @@
 #include <rapidxml-1.13/rapidxml.hpp>
 #include <rapidxml-1.13/rapidxml_utils.hpp>
 
+
+//Struct holding pointers to device variables
 struct curve_info
 {
 	unsigned int * number_of_segments;
@@ -39,6 +41,7 @@ struct curve_info
 	float4*  image_table[3];
 };
 
+//Struct holding info to use in callback functions
 struct window_info
 {
 	curve_info* curve_pointers_device;
