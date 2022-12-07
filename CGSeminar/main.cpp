@@ -22,16 +22,17 @@
 #include <rapidxml-1.13/rapidxml.hpp>
 #include <rapidxml-1.13/rapidxml_utils.hpp>
 
-const std::string curve_file = "/xmls/arch.xml";
+const std::string curve_file = "/xmls/DiffusionCurvePack/lady_bug.xml";
 float initial_distance_value = 10e5;
 
-char window_name[30];
+char window_name[100];
 
 int main() {
 
 	//Setup cuda
 	GPU_setup();
-	
+
+
 	//Setup rand
 	srand(time(NULL));
 
@@ -238,6 +239,8 @@ int main() {
 	
 
 
+	GPU_start_timer();
+
 	//Upload data to GPU
 	curve_info device_pointers;
 
@@ -280,9 +283,14 @@ int main() {
 	curve_info* curve_info_device = reinterpret_cast<curve_info*>(GPU_upload(sizeof(curve_info), &device_pointers));
 	info.curve_pointers_device = curve_info_device;
 
+	GPU_stop_timer("Uploading parameters to GPU");
+	GPU_start_timer();
+
 	//Create distance and boundary values map
 	KernelWrapper::set_initial_distance(image_size, device_pointers.distance_map, device_pointers.image_size);
 	KernelWrapper::make_distance_map(image_size, device_pointers.distance_map, device_pointers.boundary_conditions, curve_info_device);
+
+	GPU_stop_timer("Pre-proccesing distance and boundary condition map");
 
 	//Dowload the distance map back to the cpu for use in drawing circles
 	float4* distance_map = reinterpret_cast<float4*>(malloc(sizeof(float4) * image_size.x * image_size.y));
@@ -290,6 +298,9 @@ int main() {
 
 	//Make sure all the queued work is done
 	GPU_sync();
+
+	//Setup sample time accumulator
+	double sample_time_accumulator = 0;
 
 	//Render loop
 	while (!glfwWindowShouldClose(window))
@@ -308,10 +319,14 @@ int main() {
 
 		//If sample taking is unpaused or we want 1 sample sample and copy it to PBO
 		if (!info.pause || info.next_sample) {
-
+			//measure sample time
+			GPU_start_timer();
 			KernelWrapper::sample(image_size, curve_info_device, info.sample_count);
-			GPU_copy(sizeof(float4) * image_size.x * image_size.y, device_pointers.image_table[info.window_type], pbo_final_device);
+			sample_time_accumulator += GPU_stop_timer("taking sample", false);
+			std::cout << "\r" << std::flush;
+			
 
+			GPU_copy(sizeof(float4) * image_size.x * image_size.y, device_pointers.image_table[info.window_type], pbo_final_device);
 			info.sample_count++;
 
 			//Reset wheter to take 1 sample
@@ -362,6 +377,8 @@ int main() {
 
 			//Reset wheter to draw circle
 			info.draw_circle = false;
+
+
 		}
 
 		//Make sure all queued work is done
@@ -379,7 +396,7 @@ int main() {
 		glfwPollEvents();
 		
 		//Set the window name to current sample count
-		snprintf(window_name, 30, "Sample count : %u", info.sample_count);
+		snprintf(window_name, 100, "Sample count : %u, Average sample time : %f", info.sample_count, sample_time_accumulator / info.sample_count);
 		glfwSetWindowTitle(window, window_name );
 	}
 	

@@ -4,6 +4,8 @@
 #include "vec_mult.cuh"
 
 CUstream_st* stream;
+cudaEvent_t start;
+cudaEvent_t end;
 
 
 //Sets values of image to initial values
@@ -329,6 +331,8 @@ namespace KernelWrapper{
 void GPU_setup() {
     cudaFree(0);
     CALL_CHECK(cudaStreamCreate(&stream));
+    CALL_CHECK(cudaEventCreate(&start)); 
+    CALL_CHECK(cudaEventCreate(&end));
 }
 
 void* GPU_malloc(size_t size) {
@@ -378,4 +382,21 @@ void GPU_copy(rsize_t size, void* data_src, void* data_dst) {
         cudaMemcpyDeviceToDevice,
         stream
     ));
+}
+
+void GPU_start_timer() {
+    CALL_CHECK(cudaEventRecord(start, stream));
+}
+
+float GPU_stop_timer(std::string description, bool use_newline) {
+    float time = 0;
+
+    GPU_sync();
+    CALL_CHECK(cudaEventRecord(end, stream));
+    GPU_sync();
+    CALL_CHECK(cudaEventElapsedTime(&time, start, end));
+
+    std::cout << "Duration of " << description << " : " << time << " ms" << (use_newline ? "\n" : "") << std::flush;
+
+    return time;
 }

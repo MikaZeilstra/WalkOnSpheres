@@ -51,3 +51,5 @@ void GPU_download(size_t size, void* data_device, void* dst);
 void GPU_free(void* device_ptr);
 void GPU_sync();
 void GPU_copy(rsize_t size, void* data_src, void* data_dst);
+void GPU_start_timer();
+float GPU_stop_timer(std::string description, bool use_newline=true);
