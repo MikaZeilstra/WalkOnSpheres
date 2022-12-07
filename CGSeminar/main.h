@@ -48,9 +48,9 @@ struct window_info
 
 	uint2 window_size;
 	double2 mouse_pos;
-	int window_type;
+	int window_type = 0;
 
-	unsigned int sample_count;
+	unsigned int sample_count = 1;
 
 	bool switch_window = true;
 	bool pause = true;

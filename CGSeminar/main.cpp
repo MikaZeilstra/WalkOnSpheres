@@ -291,8 +291,6 @@ int main() {
 	//Make sure all the queued work is done
 	GPU_sync();
 
-	info.sample_count = 1;
-
 	//Render loop
 	while (!glfwWindowShouldClose(window))
 	{
