@@ -265,12 +265,15 @@ int main() {
 
 	//Alocate memory for the maps and accumulator
 	device_pointers.distance_map = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
-	device_pointers.image_table[0] = device_pointers.distance_map;
+	device_pointers.image_table[2] = device_pointers.distance_map;
 	device_pointers.boundary_conditions = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
-	device_pointers.image_table[1] = device_pointers.boundary_conditions;
+	device_pointers.image_table[3] = device_pointers.boundary_conditions;
 	device_pointers.current_solution = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
-	device_pointers.image_table[2] = device_pointers.current_solution;
+	device_pointers.image_table[1] = device_pointers.current_solution;
+	device_pointers.boundaries = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
+	device_pointers.image_table[0] = device_pointers.boundaries;
 	device_pointers.sample_accumulator = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
+
 	
 	//Upload image size
 	device_pointers.image_size = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2), &image_size));
@@ -433,11 +436,11 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 
 	//Cycle windows with arrow keys
 	if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
-		info->window_type = (info->window_type + 1) % 3;
+		info->window_type = (info->window_type + 1) % 4;
 		info->switch_window = true;
 	}
 	else if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
-		info->window_type = ((info->window_type - 1)+3) % 3;
+		info->window_type = ((info->window_type - 1)+4) % 4;
 		info->switch_window = true;
 	}
 	//Reset samples with R

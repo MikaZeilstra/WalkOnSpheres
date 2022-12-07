@@ -157,6 +157,12 @@ __global__ void make_distance_map_kernel(float4* distance,float4* color, curve_i
                     //Set the color and distance maps to found values
                     color[x + y * curve_pointers->image_size->x] = { curve_color.x,curve_color.y,curve_color.z,fmaxf(curve_distance- DISTANCE_MAP_EPS,0)};
                     distance[x + y * curve_pointers->image_size->x] = { curve_distance,curve_distance,curve_distance,curve_distance };
+
+                    //If we are close enough to a curve draw it in the boundaries frame
+                    if (curve_distance < DISTANCE_MAP_EPS) {
+                        curve_pointers->boundaries[x + y * curve_pointers->image_size->x] = { curve_color.x,curve_color.y,curve_color.z,1 };
+                    }
+
                 }
                 
             }

@@ -31,6 +31,7 @@ struct curve_info
 	float4* current_solution;
 	float4* distance_map;
 	float4* boundary_conditions;
+	float4* boundaries;
 
 	float4* sample_accumulator;
 
@@ -38,7 +39,7 @@ struct curve_info
 
 	uint2* image_size;
 
-	float4*  image_table[3];
+	float4*  image_table[4];
 };
 
 //Struct holding info to use in callback functions
