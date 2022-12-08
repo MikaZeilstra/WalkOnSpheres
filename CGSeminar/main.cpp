@@ -273,7 +273,9 @@ int main() {
 	device_pointers.boundaries = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
 	device_pointers.image_table[0] = device_pointers.boundaries;
 	device_pointers.sample_accumulator = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
-
+	device_pointers.laplacian_mag = reinterpret_cast<float4*>(GPU_malloc(sizeof(float4) * image_size.x * image_size.y));
+	device_pointers.image_table[4] = device_pointers.laplacian_mag;
+	;
 	
 	//Upload image size
 	device_pointers.image_size = reinterpret_cast<uint2*>(GPU_upload(sizeof(uint2), &image_size));
@@ -316,7 +318,7 @@ int main() {
 		//Copy the correct window to the PBO if it has changed
 		if (info.switch_window) {
 			GPU_copy(sizeof(float4) * image_size.x * image_size.y, device_pointers.image_table[info.window_type], pbo_final_device);
-
+	
 			info.switch_window = false;
 		}
 
@@ -436,11 +438,11 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 
 	//Cycle windows with arrow keys
 	if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
-		info->window_type = (info->window_type + 1) % 4;
+		info->window_type = (info->window_type + 1) % 5;
 		info->switch_window = true;
 	}
 	else if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
-		info->window_type = ((info->window_type - 1)+4) % 4;
+		info->window_type = ((info->window_type - 1)+5) % 5;
 		info->switch_window = true;
 	}
 	//Reset samples with R

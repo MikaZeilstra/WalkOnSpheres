@@ -12,11 +12,15 @@ The application has several debug/educational features which can be controlled u
 
 The application consits of several screens which can be navigated using the left and right arrow screen.
 
-The first screen shows a image which encodes the distance to the closest diffusion curve from its coordinate
+The first screen shows only the curves for the diffusion curves,
 
-The second image shows the color value of the closest point on the closest diffusion curve.
+The second screen starts of blank and is the screen which contains the current solution
 
-And the last screen show the current solution
+The third screen shows a image which encodes the distance to the closest diffusion curve from its coordinate
+
+The fourth image shows the color value of the closest point on the closest diffusion curve.
+
+And the last screen show the laplacian of the current solution since we try and solve for the laplacian to be zero this can be interpreted as the error
 
 ### Keys
 

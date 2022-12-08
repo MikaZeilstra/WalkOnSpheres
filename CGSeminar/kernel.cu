@@ -240,6 +240,17 @@ __global__ void sample_kernel(curve_info* curve_pointers, unsigned int sample_co
     
     //Set current solution to accumulator divided by number of samples
     curve_pointers->current_solution[x + y * curve_pointers->image_size->x] = ((1.0f) / sample_count) * curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x];
+    __syncthreads;
+    //If the pixel is not on the edge calculate the laplacian
+    if (x >= 1 && x < curve_pointers->image_size->x - 1 && y >= 1 && y < curve_pointers->image_size->y) {
+        curve_pointers->laplacian_mag[x + y * curve_pointers->image_size->x] =
+            4 * curve_pointers->current_solution[x + y * curve_pointers->image_size->x] -
+            curve_pointers->current_solution[x + 1 + y * curve_pointers->image_size->x] -
+            curve_pointers->current_solution[x - 1 + y * curve_pointers->image_size->x] -
+            curve_pointers->current_solution[x + (y + 1) * curve_pointers->image_size->x] -
+            curve_pointers->current_solution[x + (y - 1) * curve_pointers->image_size->x];
+    }
+    
 }
 
 //Kernel for setting up curand states
