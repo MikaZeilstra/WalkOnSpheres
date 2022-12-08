@@ -22,7 +22,7 @@
 #include <rapidxml-1.13/rapidxml.hpp>
 #include <rapidxml-1.13/rapidxml_utils.hpp>
 
-const std::string curve_file = "/xmls/DiffusionCurvePack/lady_bug.xml";
+const std::string curve_file = "/xmls/diffusionCurvePack/lady_bug.xml";
 float initial_distance_value = 10e5;
 
 char window_name[100];
@@ -399,7 +399,7 @@ int main() {
 		glfwPollEvents();
 		
 		//Set the window name to current sample count
-		snprintf(window_name, 100, "Sample count : %u, Average sample time : %f", info.sample_count, sample_time_accumulator / info.sample_count);
+		snprintf(window_name, 100, "Sample count : %u, Average sample time : %f", info.sample_count -1 , sample_time_accumulator / (info.sample_count -1));
 		glfwSetWindowTitle(window, window_name );
 	}
 	
