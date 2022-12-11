@@ -239,9 +239,13 @@ __global__ void sample_kernel(curve_info* curve_pointers, unsigned int sample_co
     curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x] = curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x] + final_v;
     
     //Set current solution to accumulator divided by number of samples
-    curve_pointers->current_solution[x + y * curve_pointers->image_size->x] = ((1.0f) / sample_count) * curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x];
-    __syncthreads;
-    //If the pixel is not on the edge calculate the laplacian
+    curve_pointers->current_solution[x + y * curve_pointers->image_size->x] = ((1.0f) / sample_count) * curve_pointers->sample_accumulator[x + y * curve_pointers->image_size->x];    
+}
+
+//kernel for laplacian filter
+__global__ void laplacian_kernel(curve_info* curve_pointers) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= 1 && x < curve_pointers->image_size->x - 1 && y >= 1 && y < curve_pointers->image_size->y) {
         curve_pointers->laplacian_mag[x + y * curve_pointers->image_size->x] =
             4 * curve_pointers->current_solution[x + y * curve_pointers->image_size->x] -
@@ -250,7 +254,6 @@ __global__ void sample_kernel(curve_info* curve_pointers, unsigned int sample_co
             curve_pointers->current_solution[x + (y + 1) * curve_pointers->image_size->x] -
             curve_pointers->current_solution[x + (y - 1) * curve_pointers->image_size->x];
     }
-    
 }
 
 //Kernel for setting up curand states
@@ -320,6 +323,8 @@ namespace KernelWrapper{
         dim3 dim_block_grid = { ((unsigned int)ceil(size.x / THREADS_PER_BLOCK)), ((unsigned int)ceil(size.y / THREADS_PER_BLOCK)) ,1 };
 
         sample_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (curve_info_device, sample_count);
+        laplacian_kernel << <dim_block_grid, dim_threads_per_block, 0, stream >> > (curve_info_device);
+        
     }
 
     void setup_curand(uint2 size, curandState_t* states, uint2* size_device) {
